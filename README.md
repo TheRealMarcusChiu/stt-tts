@@ -209,6 +209,42 @@ The service listens on port `8000`. Models are downloaded lazily on the first
 request to each model, so the first call is slow while weights download to
 `MODEL_CACHE_DIR`. Adjust the host/port in the `ExecStart` line if needed.
 
+## Troubleshooting: GPU / CUDA
+
+**Symptom:** transcription works with `DEVICE=cpu` but fails on `DEVICE=cuda`
+(often a `503` mentioning `Unable to load libcudnn_ops.so.9` or
+`libcublas.so.12 is not found`).
+
+**Cause:** faster-whisper's backend (CTranslate2) is built against **CUDA 12**
+and loads **cuBLAS 12 + cuDNN 9** at runtime, but neither library is bundled or
+pulled in by `pip install faster-whisper`. This is independent of the driver:
+`nvidia-smi` showing `CUDA Version: 13.0` is only the *maximum* CUDA your driver
+supports — NVIDIA drivers are backward compatible, so a CUDA 13 driver runs
+CUDA 12 code. **Do not downgrade the driver**, and **do not** symlink
+`libcublas.so.13` → `.so.12` (ABI differs; int8 will crash).
+
+**Fix** — install the CUDA 12 userspace libraries into the same venv:
+
+```bash
+pip install -e '.[all,cuda]'        # adds nvidia-cublas-cu12 + nvidia-cudnn-cu12 (9.x)
+```
+
+The app preloads these automatically on first GPU use (`stt_tts/cuda.py`), so no
+`LD_LIBRARY_PATH` is required — which matters under systemd, where an
+interactive `export` would not reach the service. If you instead rely on system
+CUDA packages, set `LD_LIBRARY_PATH` (in the unit's `Environment=` for systemd).
+
+Verify the GPU is usable:
+
+```bash
+python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"   # >= 1
+```
+
+> Blackwell (RTX 50-series) note: the stock CTranslate2 wheel has no kernels for
+> `sm_100`/`sm_120`, so the pip libs alone aren't enough there — it needs a
+> from-source build. Ada/Ampere/Turing cards (RTX 20/30/40-series, incl. the
+> 4070) are fully covered by the fix above.
+
 ## Development
 
 ```bash

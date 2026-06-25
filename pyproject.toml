@@ -21,6 +21,10 @@ stt = ["faster-whisper>=1.1.0"]
 kokoro = ["kokoro>=0.9.4", "soundfile>=0.12.1", "numpy>=1.26"]
 # Piper TTS (GPL-3.0). Also requires the espeak-ng system package.
 piper = ["piper-tts>=1.3.0"]
+# CUDA 12 userspace libraries (cuBLAS + cuDNN 9) that faster-whisper/CTranslate2
+# load at runtime for GPU. Works under a CUDA 12 or 13 driver; the app preloads
+# them automatically (see stt_tts/cuda.py). Linux + NVIDIA only.
+cuda = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9,<10"]
 # Everything needed to actually run the server on a GPU box.
 all = [
   "faster-whisper>=1.1.0",

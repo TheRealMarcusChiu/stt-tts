@@ -21,6 +21,12 @@ WorkingDirectory=/root/stt-tts
 # Create it from the template:  cp .env.example .env
 EnvironmentFile=-/root/stt-tts/.env
 
+# GPU note: install the CUDA libs with `pip install -e '.[all,cuda]'` and the app
+# auto-loads cuBLAS/cuDNN — no LD_LIBRARY_PATH needed. If instead you rely on
+# system CUDA libraries, expose them here (an interactive `export` does NOT reach
+# a systemd service), e.g.:
+# Environment=LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+
 ExecStart=/root/stt-tts/.venv/bin/uvicorn stt_tts.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5

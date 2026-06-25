@@ -205,6 +205,14 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
             await run_in_threadpool(engine.ensure_ready)
         except EngineNotInstalled as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - model load (GPU/cuDNN/download) failure
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    f"STT model failed to load: {exc}. Check the GPU/cuDNN libraries "
+                    "(faster-whisper needs cuDNN 9 / cuBLAS for CUDA 12) or set DEVICE=cpu."
+                ),
+            ) from exc
 
         options = {"word_timestamps": word_timestamps}
 
@@ -265,6 +273,11 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
         except ModelNotFound as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - model/voice load (GPU/weights) failure
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"TTS model '{payload.model or 'default'}' failed to load: {exc}",
+            ) from exc
 
         if payload.stream:
             generator = _synthesize_stream(

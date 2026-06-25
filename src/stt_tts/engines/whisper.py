@@ -35,6 +35,12 @@ class FasterWhisperEngine(STTEngine):
     def ensure_ready(self) -> None:
         if self._model is not None:
             return
+        # Make pip-installed CUDA 12 cuBLAS/cuDNN libs loadable before importing
+        # the CTranslate2-backed faster-whisper (no-op on CPU / without the libs).
+        if self._device != "cpu":
+            from ..cuda import preload_cuda_libraries
+
+            preload_cuda_libraries()
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:  # pragma: no cover - exercised only without the dep
