@@ -11,6 +11,7 @@ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from stt_tts.audio import pcm16_to_wav, streaming_wav_header
 from stt_tts.config import Settings
+from stt_tts.cuda import cuda_status
 from stt_tts.engines.base import (
     EngineNotInstalled,
     ModelNotFound,
@@ -22,6 +23,7 @@ from stt_tts.engines.base import (
 from stt_tts.engines.manager import EngineManager
 from stt_tts.models import (
     STT_RESPONSE_FORMATS,
+    CudaInfo,
     HealthResponse,
     ModelInfo,
     ModelsResponse,
@@ -152,9 +154,13 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
+        # cuda_status() may import the CTranslate2 C extension on first call;
+        # run it off the event loop. The result is cached per process.
+        cuda = await run_in_threadpool(cuda_status)
         return HealthResponse(
             status="ok",
             device=settings.device,
+            cuda=CudaInfo(**cuda),
             stt_models=manager.stt_models(),
             tts_models=manager.tts_models(),
         )

@@ -25,6 +25,12 @@ def test_health(client):
     assert body["status"] == "ok"
     assert "fake-stt" in body["stt_models"]
     assert "fake-tts" in body["tts_models"]
+    # CUDA readiness block is always present and well-typed.
+    cuda = body["cuda"]
+    assert isinstance(cuda["available"], bool)
+    assert isinstance(cuda["libs_found"], bool)
+    assert "device_count" in cuda
+    assert cuda["detail"]
 
 
 def test_list_models(client):

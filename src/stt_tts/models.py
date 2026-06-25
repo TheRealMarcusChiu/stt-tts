@@ -44,8 +44,18 @@ class ModelsResponse(BaseModel):
     data: list[ModelInfo]
 
 
+class CudaInfo(BaseModel):
+    # Whether CTranslate2 (faster-whisper's backend) can see a CUDA GPU.
+    available: bool
+    device_count: int | None = None
+    # Whether the nvidia-*-cu12 cuBLAS/cuDNN wheels are installed (the [cuda] extra).
+    libs_found: bool = False
+    detail: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     device: str
+    cuda: CudaInfo
     stt_models: list[str]
     tts_models: list[str]

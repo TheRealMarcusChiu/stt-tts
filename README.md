@@ -32,7 +32,9 @@ and `voice` chooses the voice within it.
 - STT response formats: `json` (default), `text`, `verbose_json`, `srt`, `vtt`
 - TTS response formats: `wav` (default), `pcm`
 - `GET /v1/models` lists available STT/TTS models and TTS voices
-- `GET /health` reports device and configured models
+- `GET /health` reports device, configured models, and **CUDA readiness**
+  (whether the GPU backend can actually see a device — confirm GPU without
+  sending audio)
 - Blocking model inference runs in a threadpool so it never stalls the event loop
 - Heavy ML dependencies are optional extras and lazily imported, so the package
   installs and the test suite runs without a GPU
@@ -234,11 +236,24 @@ The app preloads these automatically on first GPU use (`stt_tts/cuda.py`), so no
 interactive `export` would not reach the service. If you instead rely on system
 CUDA packages, set `LD_LIBRARY_PATH` (in the unit's `Environment=` for systemd).
 
-Verify the GPU is usable:
+Verify the GPU is usable — either directly, or via `/health` (no audio needed):
 
 ```bash
 python -c "import ctranslate2; print(ctranslate2.get_cuda_device_count())"   # >= 1
+
+curl -s http://localhost:8000/health | python -m json.tool
+# {
+#   "device": "cuda",
+#   "cuda": { "available": true, "device_count": 1, "libs_found": true,
+#             "detail": "CTranslate2 sees 1 CUDA device(s)." },
+#   ...
+# }
 ```
+
+In the `cuda` block: `available:false` with `device_count:0` means the GPU isn't
+visible to the backend (driver/passthrough issue); `available:true` but
+`libs_found:false` (and not using system CUDA libs) points at the missing
+cuBLAS/cuDNN described above.
 
 > Blackwell (RTX 50-series) note: the stock CTranslate2 wheel has no kernels for
 > `sm_100`/`sm_120`, so the pip libs alone aren't enough there — it needs a

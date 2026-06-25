@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _NVIDIA_LIB_MODULES = ("nvidia.cublas.lib", "nvidia.cudnn.lib")
 
 _preloaded = False
+_status_cache: dict | None = None
 
 
 def nvidia_lib_dirs() -> list[str]:
@@ -64,3 +65,54 @@ def preload_cuda_libraries() -> bool:
                 logger.debug("Could not preload %s: %s", path, exc)
     _preloaded = preloaded
     return preloaded
+
+
+def cuda_status() -> dict:
+    """Probe whether CTranslate2 (faster-whisper's backend) can see a CUDA GPU.
+
+    Returns a dict with ``available``, ``device_count``, ``libs_found`` and a
+    human-readable ``detail``. ``device_count`` reflects the GPU visible to the
+    backend's CUDA runtime; full inference additionally needs cuBLAS/cuDNN, which
+    ``libs_found`` reports when they come from the nvidia-*-cu12 pip wheels. The
+    result is cached per process and the probe never raises.
+    """
+    global _status_cache
+    if _status_cache is not None:
+        return _status_cache
+
+    libs_found = bool(nvidia_lib_dirs())
+    try:
+        import ctranslate2
+    except ImportError:
+        _status_cache = {
+            "available": False,
+            "device_count": None,
+            "libs_found": libs_found,
+            "detail": "ctranslate2 is not installed (CPU-only install).",
+        }
+        return _status_cache
+
+    try:
+        if libs_found:
+            preload_cuda_libraries()
+        count = int(ctranslate2.get_cuda_device_count())
+    except Exception as exc:  # noqa: BLE001 - host-specific; never fail /health
+        _status_cache = {
+            "available": False,
+            "device_count": None,
+            "libs_found": libs_found,
+            "detail": f"CUDA probe failed: {exc}",
+        }
+        return _status_cache
+
+    _status_cache = {
+        "available": count > 0,
+        "device_count": count,
+        "libs_found": libs_found,
+        "detail": (
+            f"CTranslate2 sees {count} CUDA device(s)."
+            if count > 0
+            else "No CUDA device visible to CTranslate2."
+        ),
+    }
+    return _status_cache
