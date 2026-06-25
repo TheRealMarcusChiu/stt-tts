@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections.abc import Iterator
 from typing import Annotated
 
 import uvicorn
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from stt_tts.audio import pcm16_to_wav, streaming_wav_header
@@ -29,6 +32,10 @@ from stt_tts.models import (
     ModelsResponse,
     SpeechRequest,
 )
+
+# Read the upload off the wire in 1 MiB chunks so large video files are streamed
+# to disk instead of being buffered whole in memory.
+_UPLOAD_CHUNK = 1024 * 1024
 
 
 def _timestamp(seconds: float, millis_sep: str) -> str:
@@ -66,8 +73,41 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _safe_unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:  # pragma: no cover - already gone / unlinkable
+        pass
+
+
+async def _save_upload(file: UploadFile) -> str | None:
+    """Stream an upload to a temp file and return its path (None if empty).
+
+    Passing faster-whisper a real file path (rather than an in-memory buffer)
+    is more robust for container formats like MP4/MOV — whose moov index can sit
+    at the end of the file — and keeps memory bounded for large video uploads.
+    The extension is preserved only as a hint; PyAV detects the format from the
+    content, so any audio/video container with an audio track works.
+    """
+    suffix = os.path.splitext(file.filename or "")[1]
+    fd, path = tempfile.mkstemp(prefix="stt_", suffix=suffix)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            while chunk := await file.read(_UPLOAD_CHUNK):
+                size += len(chunk)
+                tmp.write(chunk)
+    except BaseException:
+        _safe_unlink(path)
+        raise
+    if size == 0:
+        _safe_unlink(path)
+        return None
+    return path
+
+
 def _collect_transcription(
-    engine: STTEngine, audio: bytes, language: str | None, options: dict
+    engine: STTEngine, audio: str | bytes, language: str | None, options: dict
 ) -> dict:
     info, segments = engine.transcribe(audio, language=language, **options)
     materialized = list(segments)
@@ -76,7 +116,7 @@ def _collect_transcription(
 
 
 def _transcribe_sse(
-    engine: STTEngine, audio: bytes, language: str | None, options: dict
+    engine: STTEngine, audio: str | bytes, language: str | None, options: dict
 ) -> Iterator[str]:
     info, segments = engine.transcribe(audio, language=language, **options)
     yield _sse(
@@ -199,45 +239,62 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
         except ModelNotFound as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-        audio = await file.read()
-        if not audio:
+        # Stream the upload to a temp file and transcribe from the path. This is
+        # robust for video containers (MP4/MOV) and bounds memory for big files.
+        audio_path = await _save_upload(file)
+        if audio_path is None:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty audio file."
             )
 
-        # Warm the model now so dependency/load errors become proper HTTP errors
-        # instead of failing mid-stream after the response has started.
+        # The temp file is owned by this request except when it is handed to a
+        # streaming response, which deletes it via a background task on finish.
+        keep_file = False
         try:
-            await run_in_threadpool(engine.ensure_ready)
-        except EngineNotInstalled as exc:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - model load (GPU/cuDNN/download) failure
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    f"STT model failed to load: {exc}. Check the GPU/cuDNN libraries "
-                    "(faster-whisper needs cuDNN 9 / cuBLAS for CUDA 12) or set DEVICE=cpu."
-                ),
-            ) from exc
+            # Warm the model now so dependency/load errors become proper HTTP
+            # errors instead of failing mid-stream after the response started.
+            try:
+                await run_in_threadpool(engine.ensure_ready)
+            except EngineNotInstalled as exc:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+                ) from exc
+            except Exception as exc:  # noqa: BLE001 - model load (GPU/cuDNN) failure
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        f"STT model failed to load: {exc}. Check the GPU/cuDNN libraries "
+                        "(faster-whisper needs cuDNN 9 / cuBLAS for CUDA 12) or set DEVICE=cpu."
+                    ),
+                ) from exc
 
-        options = {"word_timestamps": word_timestamps}
+            options = {"word_timestamps": word_timestamps}
 
-        if stream:
-            generator = _transcribe_sse(engine, audio, language, options)
-            return StreamingResponse(
-                iterate_in_threadpool(generator), media_type="text/event-stream"
-            )
+            if stream:
+                generator = _transcribe_sse(engine, audio_path, language, options)
+                keep_file = True
+                return StreamingResponse(
+                    iterate_in_threadpool(generator),
+                    media_type="text/event-stream",
+                    background=BackgroundTask(_safe_unlink, audio_path),
+                )
 
-        try:
-            result = await run_in_threadpool(
-                _collect_transcription, engine, audio, language, options
-            )
-        except EngineNotInstalled as exc:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - surface backend failures as 500
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Transcription failed: {exc}"
-            ) from exc
+            try:
+                result = await run_in_threadpool(
+                    _collect_transcription, engine, audio_path, language, options
+                )
+            except EngineNotInstalled as exc:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+                ) from exc
+            except Exception as exc:  # noqa: BLE001 - surface backend failures
+                raise HTTPException(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Transcription failed: {exc}",
+                ) from exc
+        finally:
+            if not keep_file:
+                _safe_unlink(audio_path)
 
         info: TranscriptionInfo = result["info"]
         segments: list[TranscriptionSegment] = result["segments"]

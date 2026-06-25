@@ -50,7 +50,7 @@ class STTEngine(ABC):
 
     @abstractmethod
     def transcribe(
-        self, audio: bytes, *, language: str | None = None, **options: object
+        self, audio: str | bytes, *, language: str | None = None, **options: object
     ) -> tuple[TranscriptionInfo, Iterator[TranscriptionSegment]]:
         """Return transcription info plus a (possibly lazy) segment iterator.
 

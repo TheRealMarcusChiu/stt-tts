@@ -56,7 +56,7 @@ class FasterWhisperEngine(STTEngine):
 
     def transcribe(
         self,
-        audio: bytes,
+        audio: str | bytes,
         *,
         language: str | None = None,
         word_timestamps: bool = False,

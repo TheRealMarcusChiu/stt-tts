@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import io
+import os
 import wave
+
+from stt_tts.engines.base import STTEngine, TranscriptionInfo, TranscriptionSegment
 
 
 def _wav_bytes() -> bytes:
@@ -94,3 +97,39 @@ def test_bad_response_format_returns_422(client):
         "/v1/audio/transcriptions", files=_upload(), data={"response_format": "weird"}
     )
     assert response.status_code == 422
+
+
+class _PathCapturingSTT(STTEngine):
+    model_id = "fake-stt"
+
+    def __init__(self) -> None:
+        self.seen_audio: object = None
+        self.existed = False
+        self.contents: bytes | None = None
+
+    def transcribe(self, audio, *, language=None, **options):
+        # The route must hand the engine a real filesystem path, not raw bytes.
+        self.seen_audio = audio
+        self.existed = isinstance(audio, str) and os.path.exists(audio)
+        if self.existed:
+            with open(audio, "rb") as handle:
+                self.contents = handle.read()
+        info = TranscriptionInfo(language="en", duration=1.0)
+        return info, iter([TranscriptionSegment(id=0, start=0.0, end=1.0, text="ok")])
+
+
+def test_upload_is_passed_as_temp_file_path(make_client):
+    # An .mp4 (or any container) upload is written to a temp file and the path,
+    # not the bytes, is handed to faster-whisper.
+    engine = _PathCapturingSTT()
+    client = make_client(stt=engine)
+    payload = b"\x00\x01\x02fake-mp4-bytes\x03\x04"
+    response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.mp4", payload, "video/mp4")},
+        data={"model": "fake-stt"},
+    )
+    assert response.status_code == 200
+    assert isinstance(engine.seen_audio, str)
+    assert engine.existed
+    assert engine.contents == payload

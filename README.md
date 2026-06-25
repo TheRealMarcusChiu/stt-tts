@@ -93,6 +93,19 @@ curl -X POST http://localhost:8000/v1/audio/transcriptions \
 `response_format=verbose_json` adds `language`, `duration`, and per-segment
 timings; `text`, `srt`, and `vtt` return the corresponding plain-text formats.
 
+**Audio and video files both work.** The upload is decoded with PyAV (bundled
+FFmpeg), which extracts the first audio track from any container — `mp3`, `wav`,
+`m4a`, `flac`, `ogg`, as well as **video** files like `mp4`, `mov`, `mkv`, and
+`webm`. The file extension is irrelevant (format is detected from content); the
+file just needs an audio track. Uploads are streamed to a temp file, so large
+video files don't have to fit in memory.
+
+```bash
+curl -X POST http://localhost:8000/v1/audio/transcriptions \
+  -F model=large-v3-turbo \
+  -F file=@/path/to/video.mp4
+```
+
 ### Streaming transcription (SSE)
 
 ```bash
