@@ -167,17 +167,47 @@ docker build -t stt-tts .
 docker run --rm -p 8000:8000 --env-file .env -v "$PWD/models:/models" stt-tts
 ```
 
-## systemd
+## systemd (Proxmox LXC, Ubuntu)
 
-`stt-tts.service` runs the API directly on a Linux host / Proxmox LXC. Adjust
-`WorkingDirectory`, the `.venv` path, and uncomment `EnvironmentFile` as needed,
-then:
+`stt-tts.service` runs the API directly inside a Proxmox **LXC** Ubuntu
+container with the RTX GPU passed through. It runs as `root` from
+`/root/stt-tts` and is written to be GPU-passthrough friendly (it deliberately
+avoids `PrivateDevices=`/`DevicePolicy=closed`, which would hide the
+passed-through `/dev/nvidia*` nodes and break CUDA).
+
+> GPU passthrough itself is configured on the Proxmox **host** (bind the
+> `/dev/nvidia*` devices into the container and install the matching guest
+> driver with `--no-kernel-module`). `nvidia-smi` must work inside the
+> container before the service can use the GPU.
+
+Inside the container:
 
 ```bash
+# 1. System dependencies (espeak-ng is the G2P backend for Kokoro/Piper)
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-pip git espeak-ng libsndfile1
+
+# 2. Get the code and install into a venv at /root/stt-tts/.venv
+git clone https://github.com/TheRealMarcusChiu/stt-tts.git /root/stt-tts
+cd /root/stt-tts
+python3 -m venv .venv
+.venv/bin/pip install -e '.[all]'      # faster-whisper + kokoro + piper
+# For CUDA, also install a CUDA build of torch and set DEVICE=cuda below.
+
+# 3. Configuration (optional but recommended)
+cp .env.example .env
+nano .env                              # set DEVICE=cuda, MODEL_CACHE_DIR, etc.
+
+# 4. Install and start the service
 sudo cp stt-tts.service /etc/systemd/system/stt-tts.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now stt-tts
+sudo systemctl status stt-tts
 ```
+
+The service listens on port `8000`. Models are downloaded lazily on the first
+request to each model, so the first call is slow while weights download to
+`MODEL_CACHE_DIR`. Adjust the host/port in the `ExecStart` line if needed.
 
 ## Development
 

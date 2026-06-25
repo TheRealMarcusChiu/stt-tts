@@ -1,22 +1,36 @@
 [Unit]
-Description=STT/TTS API
+Description=STT/TTS API (speech-to-text and text-to-speech)
 Documentation=https://github.com/TheRealMarcusChiu/stt-tts
+# Wait for the network so first-run model downloads succeed.
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+
+# Running as root keeps access to the passed-through /dev/nvidia* devices
+# simple inside the LXC. To run as a non-root user instead, add that user to
+# the "video" and "render" groups so it can reach the GPU.
 User=root
 Group=root
+
 WorkingDirectory=/root/stt-tts
-# EnvironmentFile=/root/stt-tts/stt-tts.env
+
+# Optional runtime config (DEVICE, *_MODEL, voices, MODEL_CACHE_DIR, ...).
+# The leading "-" means the unit still starts if the file is absent.
+# Create it from the template:  cp .env.example .env
+EnvironmentFile=-/root/stt-tts/.env
+
 ExecStart=/root/stt-tts/.venv/bin/uvicorn stt_tts.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
 KillSignal=SIGINT
 
-# Hardening
+# --- Hardening (kept GPU-passthrough friendly) ---
+# IMPORTANT for Proxmox LXC + GPU passthrough: do NOT add PrivateDevices=yes or
+# DevicePolicy=closed. Either one hides the passed-through /dev/nvidia* device
+# nodes from this service and breaks CUDA (faster-whisper / Kokoro on the GPU).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
