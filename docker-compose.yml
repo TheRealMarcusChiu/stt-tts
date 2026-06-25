@@ -1,0 +1,19 @@
+services:
+  stt-tts:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Persist downloaded Whisper weights and Piper voices across restarts.
+      - ./models:/models
+    # GPU access requires the NVIDIA Container Toolkit on the host.
+    # Remove this block to run CPU-only.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,27 @@
+[Unit]
+Description=STT/TTS API
+Documentation=https://github.com/TheRealMarcusChiu/stt-tts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/stt-tts
+# EnvironmentFile=/root/stt-tts/stt-tts.env
+ExecStart=/root/stt-tts/.venv/bin/uvicorn stt_tts.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/root/stt-tts
+
+[Install]
+WantedBy=multi-user.target
