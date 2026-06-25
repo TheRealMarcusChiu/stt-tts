@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from collections.abc import Iterator
@@ -32,6 +33,8 @@ from stt_tts.models import (
     ModelsResponse,
     SpeechRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 # Read the upload off the wire in 1 MiB chunks so large video files are streamed
 # to disk instead of being buffered whole in memory.
@@ -225,6 +228,7 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
         response_format: Annotated[str, Form()] = "json",
         stream: Annotated[bool, Form()] = False,
         word_timestamps: Annotated[bool, Form()] = False,
+        vad_filter: Annotated[bool | None, Form()] = None,
     ):
         if response_format not in STT_RESPONSE_FORMATS:
             raise HTTPException(
@@ -268,7 +272,8 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
                     ),
                 ) from exc
 
-            options = {"word_timestamps": word_timestamps}
+            # vad_filter=None lets the engine use its configured default.
+            options = {"word_timestamps": word_timestamps, "vad_filter": vad_filter}
 
             if stream:
                 generator = _transcribe_sse(engine, audio_path, language, options)
@@ -299,6 +304,15 @@ def create_app(settings: Settings | None = None, manager: EngineManager | None =
         info: TranscriptionInfo = result["info"]
         segments: list[TranscriptionSegment] = result["segments"]
         text: str = result["text"]
+
+        if not text:
+            logger.warning(
+                "Transcription produced no text (language=%s, duration=%ss, vad_filter=%s). "
+                "If the file has audible speech, retry with vad_filter=false.",
+                info.language,
+                info.duration,
+                vad_filter if vad_filter is not None else "default",
+            )
 
         if response_format == "text":
             return PlainTextResponse(text)

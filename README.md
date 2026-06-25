@@ -106,6 +106,27 @@ curl -X POST http://localhost:8000/v1/audio/transcriptions \
   -F file=@/path/to/video.mp4
 ```
 
+**Empty `text` back?** The audio decoded but the model produced no segments. The
+usual cause is the **voice-activity-detection (VAD) filter** dropping the whole
+track (it is on by default — see `STT_VAD_FILTER`). Retry with it off:
+
+```bash
+curl -X POST http://localhost:8000/v1/audio/transcriptions \
+  -F model=large-v3-turbo \
+  -F vad_filter=false \
+  -F response_format=verbose_json \
+  -F file=@/path/to/video.mp4
+```
+
+`verbose_json` shows the detected `language` and `duration`: if `duration`
+matches the clip and text now appears, VAD was the cause (set
+`STT_VAD_FILTER=false` to make it the default). If `duration` is ~0, the file
+has no usable audio track. The server also logs a warning whenever a
+transcription returns no text.
+
+Per-request form fields: `model`, `language`, `response_format`, `stream`,
+`word_timestamps`, and `vad_filter` (`true`/`false`, overrides `STT_VAD_FILTER`).
+
 ### Streaming transcription (SSE)
 
 ```bash

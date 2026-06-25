@@ -106,6 +106,7 @@ class _PathCapturingSTT(STTEngine):
         self.seen_audio: object = None
         self.existed = False
         self.contents: bytes | None = None
+        self.options: dict = {}
 
     def transcribe(self, audio, *, language=None, **options):
         # The route must hand the engine a real filesystem path, not raw bytes.
@@ -114,6 +115,7 @@ class _PathCapturingSTT(STTEngine):
         if self.existed:
             with open(audio, "rb") as handle:
                 self.contents = handle.read()
+        self.options = options
         info = TranscriptionInfo(language="en", duration=1.0)
         return info, iter([TranscriptionSegment(id=0, start=0.0, end=1.0, text="ok")])
 
@@ -133,3 +135,24 @@ def test_upload_is_passed_as_temp_file_path(make_client):
     assert isinstance(engine.seen_audio, str)
     assert engine.existed
     assert engine.contents == payload
+
+
+def test_vad_filter_defaults_to_none(make_client):
+    engine = _PathCapturingSTT()
+    client = make_client(stt=engine)
+    response = client.post("/v1/audio/transcriptions", files=_upload(), data={"model": "fake-stt"})
+    assert response.status_code == 200
+    # None => the engine applies its configured default.
+    assert engine.options.get("vad_filter") is None
+
+
+def test_vad_filter_can_be_disabled_per_request(make_client):
+    engine = _PathCapturingSTT()
+    client = make_client(stt=engine)
+    response = client.post(
+        "/v1/audio/transcriptions",
+        files=_upload(),
+        data={"model": "fake-stt", "vad_filter": "false"},
+    )
+    assert response.status_code == 200
+    assert engine.options.get("vad_filter") is False
